@@ -1,0 +1,6 @@
+ENT.Type 		        = "anim"
+ENT.Base 		        = "base_gmodentity"
+ENT.ClassNameOverride   = "gmod_turret"
+ENT.PrintName	        = ""
+ENT.Author		        = ""
+ENT.Contact		        = ""

@@ -1,0 +1,11 @@
+{
+	"title"		:	"Turret Tool (ENHANCED)",
+	"type"		:	"tool",
+	"tags"		:	[ "build", "fun" ],
+	"ignore"	:
+	[
+		"*.psd",
+		"*.vcproj",
+		"*.svn*"
+	]
+}
