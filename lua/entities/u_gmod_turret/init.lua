@@ -2,13 +2,16 @@ AddCSLuaFile( "cl_init.lua" )
 AddCSLuaFile( "shared.lua" )
 
 include('shared.lua')
+include('luabullet.lua')
 
 /*---------------------------------------------------------
    Name: Initialize
 ---------------------------------------------------------*/
 function ENT:Initialize()
 
-	self:SetModel( "models/weapons/w_smg1.mdl" )
+	if not util.IsValidModel(self:GetModel()) then
+		self:SetModel( "models/weapons/w_smg1.mdl" )
+	end
 	self:PhysicsInit( SOLID_VPHYSICS )
 	self:SetMoveType( MOVETYPE_VPHYSICS )
 	self:SetSolid( SOLID_VPHYSICS )
@@ -34,17 +37,19 @@ end
 
 
 local properties = {
-	Key			= { duName = "key",			dVal = 41		},
-	Damage		= { duName = "damage",		dVal = 10		},
-	Delay		= { duName = "delay",		dVal = 0.2		},
-	Force		= { duName = "force",		dVal = 0		},
-	NumBullets	= { duName = "numbullets",	dVal = 1		},
-	Toggle		= { duName = "toggle",		dVal = false	},
-	Sound		= { duName = "sound",		dVal = ""		},
-	Tracer		= { duName = "tracer",		dVal = ""		},
-	Spread		= { duName = "spread",		dVal = 0		},
-	NoCollide	= { duName = "nocollide",	dVal = true		},
-	On			= { duName = false,			dVal = false	}
+	Key			= { duName = "key",			dVal = 41			 },
+	Damage		= { duName = "damage",		dVal = 10			 },
+	Delay		= { duName = "delay",		dVal = 0.2			 },
+	Force		= { duName = "force",		dVal = 0			 },
+	NumBullets	= { duName = "numbullets",	dVal = 1			 },
+	Toggle		= { duName = "toggle",		dVal = false		 },
+	Sound		= { duName = "sound",		dVal = ""			 },
+	Tracer		= { duName = "tracer",		dVal = ""		 	 },
+	Spread		= { duName = "spread",		dVal = 0			 },
+	NoCollide	= { duName = "nocollide",	dVal = true			 },
+	On			= { duName = false,			dVal = false		 },
+	MuzzleFlash_ENT = { duName = "muzzleflash", dVal = "MuzzleEffect"},
+	LuaBullet   = {	duName = "luabullet",			dVal = false 		 },
 }
 
 
@@ -62,6 +67,7 @@ function ENT:AccessorFuncENT( name, duName, dVal )
 	if not setter then
 		self[setterName] = function ( self, v )
 			if v == nil then v = dVal end
+			self:SetNWString(name,tostring(v))
 			self[name] = v
 		end
 	end
@@ -70,6 +76,7 @@ function ENT:AccessorFuncENT( name, duName, dVal )
 		local setter = self[setterName]
 		self[setterName] = function ( self, v )
 			setter( self, v )
+			self:SetNWString(duName,tostring(v))
 			self[duName] = v
 		end
 	end
@@ -81,6 +88,8 @@ end
 
 function ENT:SetSpread( f )
 	if not f then f = properties["Spread"]["dVal"] end
+
+	self:SetNWString("Spread",tostring(f))
 	self["Spread"] = Vector( f, f, 0 )
 end
 
@@ -104,7 +113,11 @@ for name, ptable in pairs( properties ) do
 	ENT:AccessorFuncENT( name, ptable["duName"], ptable["dVal"] )
 end
 
-
+local function addangle(ang,ang2)
+	ang:RotateAroundAxis(ang:Up(),ang2.y) -- yaw
+	ang:RotateAroundAxis(ang:Forward(),ang2.r) -- roll
+	ang:RotateAroundAxis(ang:Right(),ang2.p) -- pitch
+end
 
 /*---------------------------------------------------------
 	Name: FireShot
@@ -115,6 +128,9 @@ end
 function ENT:FireShot()
 	
 	if self.NextShot > CurTime() then return end
+	if not IsValid(self:GetPlayer()) then
+		return
+	end
 	
 	self.NextShot = CurTime() + self.Delay
 	
@@ -123,32 +139,82 @@ function ENT:FireShot()
 	if soundName then self:EmitSound( soundName ) end
 	
 	-- Get the muzzle attachment (this is pretty much always 1)
-	local Attachment = self:GetAttachment( 1 )
+	-- Or is it?
+	local d=1
+	for i,v in ipairs(self:GetAttachments())do
+		if(v.name=="muzzle")then
+			d=v.id
+		end
+	end
+	local Attachment = self:GetAttachment( d ) or {Pos=self:GetPos(),Ang=self:GetAngles()}
 	
 	-- Get the shot angles and stuff.
 	local shootOrigin = Attachment.Pos
-	local shootAngles = self:GetAngles()
+	local shootAngles = Attachment.Ang
 	local shootDir = shootAngles:Forward()
+	if list.Get("TurretModelsOffset")[self:GetModel()] then
+		local tbl=list.Get("TurretModelsOffset")[self:GetModel()]
+		if isfunction(tbl.Ang) then
+			shootAngles=tbl.Ang(self,shootAngles)
+		else
+			addangle(shootAngles,tbl.Ang)
+		end
+		shootOrigin=shootOrigin+LocalToWorld(tbl.Pos,angle_zero,vector_origin,self:GetAngles())
+		shootDir = shootAngles:Forward()
+	end
+	--shootDir.z=self:GetUp().z
+	if(self:GetModel()=="models/weapons/w_crowbar.mdl")then
+		shootDir=shootDir*-1
+		shootAngles=shootDir:Angle()
+	end
+	if(self:GetModel()=="models/weapons/w_stunbaton.mdl")then
+		shootDir=self:GetForward()*-1
+		shootAngles=shootDir:Angle()
+	end
+	if(self:GetModel()=="models/weapons/w_smg1.mdl")then
+		shootDir=self:GetForward()
+		shootAngles=shootDir:Angle()
+	end
 	
 	-- Shoot a bullet
-	local bullet = {}
-		bullet.Num 			= self:GetNumBullets()
-		bullet.Src 			= shootOrigin
-		bullet.Dir 			= shootDir
-		bullet.Spread 		= self:GetSpread()
-		bullet.Tracer		= 1
-		bullet.TracerName 	= self:GetTracer()
-		bullet.Force		= self:GetForce()
-		bullet.Damage		= self:GetDamage()
-		bullet.Attacker 	= self:GetPlayer()		
-	self:FireBullets( bullet )
+
+	if not self:GetLuaBullet() then
+		local bullet = {}
+			bullet.Num 			= self:GetNumBullets()
+			bullet.Src 			= shootOrigin
+			bullet.Dir 			= shootDir
+			bullet.Spread 		= self:GetSpread()
+			bullet.Tracer		= 1
+			bullet.TracerName 	= self:GetTracer()
+			bullet.Force		= self:GetForce()
+			bullet.Damage		= self:GetDamage()
+			bullet.Attacker 	= self:GetPlayer()		
+		self:FireBullets( bullet )
+	elseif false then --TODO: FINISH THIS
+
+		-- FireBullets made in Lua
+
+		local bullet = {}
+			bullet.Num 			= self:GetNumBullets()
+			bullet.Src 			= shootOrigin
+			bullet.Dir 			= shootDir
+			bullet.Spread 		= self:GetSpread()
+			bullet.Tracer		= 1
+			bullet.TracerName 	= self:GetTracer()
+			bullet.Force		= self:GetForce()
+			bullet.Damage		= self:GetDamage()
+			bullet.Attacker 	= self:GetPlayer()	
+		self:FireLuaBullets( bullet )
+	end
 	
+	if self:GetMuzzleFlash_ENT() == "" then return end
+
 	-- Make a muzzle flash
 	local effectdata = EffectData()
 		effectdata:SetOrigin( shootOrigin )
 		effectdata:SetAngles( shootAngles )
 		effectdata:SetScale( 1 )
-	util.Effect( "MuzzleEffect", effectdata )
+	util.Effect( self:GetMuzzleFlash_ENT(), effectdata )
 	
 end
 
